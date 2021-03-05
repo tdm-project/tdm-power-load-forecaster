@@ -2,7 +2,7 @@ name: Docker Build/Publish Image
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   DOCKER_IMAGE_NAME: "tdmproject/edge-power-load-forecaster"
