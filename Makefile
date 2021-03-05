@@ -1,11 +1,11 @@
 ifeq (${TRAVIS_BRANCH},)
-GIT_BRANCH=$(shell git rev-parse --abbrev-ref HEAD | sed -e 's/master/latest/')
+GIT_BRANCH=$(shell git rev-parse --abbrev-ref HEAD | sed -e 's/main/latest/')
 else
-GIT_BRANCH=$(shell echo ${TRAVIS_BRANCH} | sed -e 's/master/latest/')
+GIT_BRANCH=$(shell echo ${TRAVIS_BRANCH} | sed -e 's/main/latest/')
 endif
 
 DOCKER_IMAGE_VERSION=1.2
-DOCKER_IMAGE_NAME=tdmproject/edge-forecaster
+DOCKER_IMAGE_NAME=tdmproject/edge-power-load-forecaster
 DOCKER_IMAGE_TAGNAME=$(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)
 DOCKER_IMAGE_TESTING=$(DOCKER_IMAGE_NAME):testing-$(DOCKER_IMAGE_VERSION)
 
