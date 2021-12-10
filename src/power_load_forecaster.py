@@ -22,7 +22,7 @@ import argparse
 import configparser
 import logging
 import sys
-from influxdb import InfluxDBClient
+from influxdb import DataFrameClient
 from time import time
 
 import forecasting
@@ -37,11 +37,15 @@ INFLUXDB_USER = 'root'             # INFLUXDB username
 INFLUXDB_PASS = 'root'             # INFLUXDB password
 GPS_LOCATION = '0.0,0.0'
 
-FORECAST_TS = 'forecast'           # Time series containing forecast
+WEATHER_SERVER_URL = 'http://159.65.112.157/api/gfs/Cagliari/T2?date='
+WEATHER_START_TIMESTAMP = '2021-03-08 00:00:00'
+WEATHER_TS = 'weather'             # Time series containing weather data
+FORECAST_TS = 'forecast'           # Time series containing power forecasts
 MEASUREMENT_TS = 'emontx3'         # Time series containing measurements
+PROCESSED_TS = 'processed'         # Time series containing processed data
+WEATHER_FORECAST_INTERVAL = 6      # Hours between two weather forecasts
 FORECAST_INTERVAL = 60*60*6        # Seconds between two forecast runs (6 hours)
 HORIZON_LENGTH = 72                # Length of the forecast, in hours
-USE_TEMPERATURE = False            # Employ the temperature measurements
 
 APPLICATION_NAME = 'Power_Load_Forecaster'
 
@@ -81,9 +85,15 @@ def configuration_parser(p_args=None):
 
     v_specific_config_defaults = {'forecast_interval': FORECAST_INTERVAL,
                                   'horizon_length': HORIZON_LENGTH,
-                                  'use_temperature': USE_TEMPERATURE,
+                                  'weather_start_timestamp':
+                                                        WEATHER_START_TIMESTAMP,
+                                  'weather_server_url': WEATHER_SERVER_URL,
+                                  'weather_ts': WEATHER_TS,
                                   'forecast_ts': FORECAST_TS,
-                                  'measurement_ts': MEASUREMENT_TS}
+                                  'measurement_ts': MEASUREMENT_TS,
+                                  'processed_ts': PROCESSED_TS,
+                                  'weather_forecast_interval':
+                                                      WEATHER_FORECAST_INTERVAL}
 
     v_config_section_defaults = {'GENERAL': v_general_config_defaults,
                                  APPLICATION_NAME: v_specific_config_defaults}
@@ -146,10 +156,35 @@ def configuration_parser(p_args=None):
               '(default: {})').format(MEASUREMENT_TS))
 
     parser.add_argument(
+        '--processed-ts', dest='processed_ts', action='store',
+        type=str,
+        help=('name of the time series containing the processed pulse '
+              'measurements (default: {})').format(PROCESSED_TS))
+
+    parser.add_argument(
         '--forecast-ts', dest='forecast_ts', action='store',
         type=str,
         help=('name of the time series containing the power load forecasts '
               '(default: {})').format(FORECAST_TS))
+
+    parser.add_argument(
+        '--weather-ts', dest='weather_ts', action='store',
+        type=str,
+        help=('name of the time series containing the weather historical data '
+              'and forecasts (default: {})').format(WEATHER_TS))
+
+    parser.add_argument(
+        '--weather-start-timestamp', dest='weather_start_timestamp',
+        action='store', type=str,
+        help=('timestamp corresponding to the availability of data from the '
+              'web service to download weather historical data '
+              'and forecasts (default: {})').format(WEATHER_START_TIMESTAMP))
+
+    parser.add_argument(
+        '--weather-server-url', dest='weather_server_url', action='store',
+        type=str,
+        help=('name of the web service to download weather historical data '
+              'and forecasts (default: {})').format(WEATHER_SERVER_URL))
 
     parser.add_argument(
         '--forecast-interval', dest='forecast_interval', action='store',
@@ -158,16 +193,16 @@ def configuration_parser(p_args=None):
               'runs (default: {} seconds)').format(FORECAST_INTERVAL))
 
     parser.add_argument(
+        '--weather-forecast-interval', dest='weather_forecast_interval',
+        action='store', type=int,
+        help=('interval, in hours, between consecutive weather forecasts '
+              '(default: {} hours)').format(WEATHER_FORECAST_INTERVAL))
+
+    parser.add_argument(
         '--horizon-length', dest='horizon_length', action='store',
         type=int,
         help=('length, in hours, of the forecast horizon '
               '(default: {} hours)').format(HORIZON_LENGTH))
-
-    parser.add_argument('--use-temperature', dest='use_temperature',
-        type=str_to_bool, nargs='?', const=True, default=False,
-        help=('specify whether to use the temperature measurements for '
-              'computing the power load forecasts '
-              '(default: {})').format(USE_TEMPERATURE))
 
     return parser.parse_args(remaining_args)
 
@@ -180,21 +215,29 @@ def forecasting_task(params: dict):
     start_time = time()
 
     # Connect to the database "Emon" in InfluxDB
-    client = InfluxDBClient(host=params['INFLUXDB_HOST'],
-                            port=params['INFLUXDB_PORT'],
-                            username=params['INFLUXDB_USER'],
-                            password=params['INFLUXDB_PASS'],
-                            database=params['INFLUXDB_DB'])
+    client = DataFrameClient(host=params['INFLUXDB_HOST'],
+                             port=params['INFLUXDB_PORT'],
+                             username=params['INFLUXDB_USER'],
+                             password=params['INFLUXDB_PASS'],
+                             database=params['INFLUXDB_DB'])
+
+    # Retrieve and update weather historical measurements and predictions
+    W = forecasting.weather_preprocessing(client, params)
 
     # Query and preprocess power load measurements
-    y, X, Xh = forecasting.preprocessing(client, params)
+    y, X, Xh = forecasting.preprocessing(client, params, W)
 
     # Predict power load consumptions
-    forecast_data = forecasting.forecasting(y, X, Xh, params)
+    df_pred = forecasting.forecasting(y, X, Xh, params)
 
     # Write power load forecasts to InfluxDB
     try:
-        client.write_points(forecast_data, time_precision='s')
+        # Write data to InfluxDB for the current source
+        client.write_points(dataframe=df_pred,
+                            database=params['INFLUXDB_DB'],
+                            measurement=params['FORECAST_TS'],
+                            protocol='line',
+                            time_precision='s')
     except Exception as e:
         logger.error(e)
     finally:
@@ -213,7 +256,7 @@ def main():
 
     # Checks the Python Interpeter version
     if (sys.version_info < (3, 0)):
-        # ###TODO: Print error message here
+        logger.error('Python 3 is requested! Leaving the program.')
         sys.exit(-1)
 
     # Parse arguments
@@ -233,11 +276,11 @@ def main():
     v_influxdb_password = args.influxdb_password
 
     # Check if "Emon" database exists
-    _client = InfluxDBClient(host=v_influxdb_host,
-                             port=v_influxdb_port,
-                             username=v_influxdb_username,
-                             password=v_influxdb_password,
-                             database=v_influxdb_database)
+    _client = DataFrameClient(host=v_influxdb_host,
+                              port=v_influxdb_port,
+                              username=v_influxdb_username,
+                              password=v_influxdb_password,
+                              database=v_influxdb_database)
 
     _dbs = _client.get_list_database()
     logger.debug(f'List of InfluxDB databases: {_dbs}')
@@ -257,9 +300,13 @@ def main():
                  'INFLUXDB_PASS': v_influxdb_password,
                  'INFLUXDB_DB': v_influxdb_database,
                  'MEASUREMENT_TS': args.measurement_ts,
+                 'PROCESSED_TS': args.processed_ts,
                  'FORECAST_TS': args.forecast_ts,
-                 'USE_TEMPERATURE': args.use_temperature,
-                 'HORIZON_LENGTH': args.horizon_length}
+                 'WEATHER_TS': args.weather_ts,
+                 'HORIZON_LENGTH': args.horizon_length,
+                 'WEATHER_SERVER_URL': args.weather_server_url,
+                 'WEATHER_FORECAST_INTERVAL': args.weather_forecast_interval,
+                 'WEATHER_START_TIMESTAMP': args.weather_start_timestamp}
 
     # Instantiate the scheduler and repeatedly run the "forecasting task"
     # "forecast interval" seconds after its previous execution

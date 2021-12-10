@@ -1,7 +1,8 @@
 # TDM Edge Power Load Forecaster
 
 The TDM Edge Power Load Forecaster is an application specifically designed for the [TDM Edge Gateway](http://www.tdm-project.it/en/) devices paired with the EmonTx energy monitors. The application, running in the background, periodically
-* collects the past measurements of power load consumption (and eventually of temperature) stored in the InfluxDB database;
+* collects the pulse measurements from the InfluxDB database to compute the power load consumption;
+* collects the temperature historical measurements and forecasts for the Cagliari area;
 * trains a Gradient Boosting quantile regression model to forecast the 1st quartile, the median value and the 3rd quartile of power load consumption in the next 72 hours.
 
 
@@ -29,7 +30,10 @@ Values are applied in the following order, the last overwriting the previous:
 : GPS coordinates of the sensor expressed as latitude and longitude (default: `0.0,0.0`)
 
 `measurement_ts`
-: name of the InfluxDB *measurement* storing the EmonTx pulses and temperature time series
+: name of the InfluxDB *measurement* storing the EmonTx pulses time series
+
+`processed_ts`
+: name of the InfluxDB *measurement* storing the processed power load time series
 
 `forecast_ts`
 : name of the InfluxDB *measurement* storing the power load forecast time series
@@ -40,8 +44,17 @@ Values are applied in the following order, the last overwriting the previous:
 `horizon_length`
 : length, in hours, of the forecast horizon
 
-`use_temperature`
-: specify whether to use the temperature measurements for computing the power load forecasts
+`weather_ts`
+: name of the InfluxDB *measurement* storing the weather-related time series
+
+`weather_server_url`
+: URL of the web service providing the weather-related time series
+
+`weather_start_timestamp`
+: date corresponding to the first available weather-related historical measurements
+
+`weather_forecast_interval`
+: interval, in hours, between consecutive weather forecasts
 
 
 #### Options accepted in `GENERAL` section
@@ -62,10 +75,14 @@ logging_level = 10
 
 [Power_Load_Forecaster]
 measurement_ts = emontx3
+processed_ts = processed
 forecast_ts = forecast
 forecast_interval = 21600
 horizon_length = 72
-use_temperature = False
+weather_ts = weather
+weather_server_url = http://159.65.112.157/api/gfs/Cagliari/T2?date=
+weather_start_timestamp = 2021-03-08 00:00:00
+weather_forecast_interval = 6
 ```
 
 
@@ -92,6 +109,9 @@ use_temperature = False
 `--measurement-ts MEASUREMENT_TS`
 : name of the time series containing the pulse measurements (default: emontx3)
 
+`--processed-ts PROCESSED_TS`
+: name of the time series containing the processed pulse measurements (default: processed)
+
 `--forecast-ts FORECAST_TS`
 : name of the time series containing the power load forecasts (default: forecast)
 
@@ -101,5 +121,14 @@ use_temperature = False
 `--horizon-length HORIZON_LENGTH`
 : length, in hours, of the forecast horizon (default: 72 hours)
 
-`--use-temperature USE_TEMPERATURE`
-: specify whether to use the temperature measurements for computing the power load forecasts (default: False)
+`--weather-ts WEATHER_TS`
+: name of the time series containing the weather historical data and forecasts (default: weather)
+
+`--weather-server-url WEATHER_SERVER_URL`
+: URL of the web service to download weather historical data and forecasts (default: http://159.65.112.157/api/gfs/Cagliari/T2?date=)
+
+`--weather-start-timestamp WEATHER_START_TIMESTAMP`
+: timestamp corresponding to the availability of data from the web service to download weather historical data and forecasts (default: 2021-03-08 00:00:00)
+
+`--weather-forecast-interval WEATHER_FORECAST_INTERVAL`
+: interval, in hours, between consecutive weather forecasts (default: 6 hours)
