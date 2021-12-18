@@ -135,12 +135,12 @@ def weather_preprocessing(client: DataFrameClient,
 
     try:
         first_weather_timestamp = get_first_timestamp(client=client,
-                                                      field_name='T2',
+                                                      field_name='T2_daily_mean',
                                                       measurement_name=weather_ts,
                                                       dt=True)
 
         last_weather_timestamp = get_last_timestamp(client=client,
-                                                    field_name='T2',
+                                                    field_name='T2_daily_mean',
                                                     measurement_name=weather_ts,
                                                     dt=True)
     except KeyError:
@@ -183,6 +183,16 @@ def weather_preprocessing(client: DataFrameClient,
                                  forecast_interval=forecast_interval,
                                  logger=logger)
 
+    # Compute daily mean, minimum and maximum temperature
+    w_df.loc[:, 'T2_daily_mean'] = w_df.groupby(w_df.index.date
+                                      ).mean().loc[w_df.index.date, 'T2'].values
+
+    w_df.loc[:, 'T2_daily_min'] = w_df.groupby(w_df.index.date
+                                       ).min().loc[w_df.index.date, 'T2'].values
+
+    w_df.loc[:, 'T2_daily_max'] = w_df.groupby(w_df.index.date
+                                       ).max().loc[w_df.index.date, 'T2'].values
+
     # Write data to InfluxDB for the current source
     if not w_df.empty:
         logger.debug('Writing weather measurements to database...')
@@ -196,7 +206,7 @@ def weather_preprocessing(client: DataFrameClient,
     # ------------------------------------------------------------------------ #
 
     # Query temperature from database
-    query = f"""SELECT "T2"
+    query = f"""SELECT "T2_daily_mean","T2_daily_min","T2_daily_max"
                 FROM "{weather_ts}";
              """
 
