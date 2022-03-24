@@ -278,10 +278,10 @@ def preprocessing(client: DataFrameClient, params: dict, W: pd.DataFrame) -> \
 
     # Query and estimate power consumption from the "pulse" time series
     query = f"""
-            SELECT NON_NEGATIVE_DERIVATIVE(MAX(pulse), 1h) as power
+            SELECT NON_NEGATIVE_DERIVATIVE(MEDIAN(pulse), 1h) as power
             FROM "{measurement_ts}"
             WHERE time >= '{last_processed_timestamp}'
-            GROUP BY time(1m)
+            GROUP BY time(5m)
             FILL(null);
             """
     logger.debug(f'Querying measurements with: {query}')
